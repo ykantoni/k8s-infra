@@ -1,0 +1,32 @@
+# Wave 0: the LoadBalancer address pool and L2 announcement policy. Cilium
+# itself (and its CRDs) is installed by vm-infra before Argo CD exists.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cilium-lb-ipam
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: k8s-infra
+  source:
+    repoURL: https://github.com/ykantoni/k8s-infra.git
+    targetRevision: main
+    path: charts/cilium-lb-ipam
+    helm:
+      releaseName: cilium-lb-ipam
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m

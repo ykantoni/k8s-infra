@@ -1,0 +1,19 @@
+{{- if .Values.hubbleUi.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: hubble-ui-lb
+  namespace: {{ .Values.hubbleUi.namespace }}
+  {{- with .Values.hubbleUi.loadBalancerIP }}
+  annotations:
+    io.cilium/lb-ipam-ips: {{ . | quote }}
+  {{- end }}
+spec:
+  type: LoadBalancer
+  selector:
+    k8s-app: hubble-ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8081
+{{- end }}

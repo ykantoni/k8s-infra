@@ -1,0 +1,20 @@
+# Longhorn's chart already creates a StorageClass named "longhorn"; making it
+# the cluster default is what lets PVCs provision dynamically without naming
+# storageClassName. defaultClassReplicaCount also sets the non-default
+# StorageClasses' fallback.
+persistence:
+  defaultClass: true
+  defaultClassReplicaCount: 3
+  defaultFsType: ext4
+
+# A normal Ubuntu kubelet already sees this path with no extra mount config.
+# The iSCSI and util-linux tooling Longhorn's engine shells out to is baked
+# into every node's image by vm-infra's packer/scripts/install-longhorn-deps.sh.
+defaultSettings:
+  defaultDataPath: /var/lib/longhorn
+
+# The pre-upgrade checker is a Helm hook Job; Argo CD renders hooks
+# differently from Helm and it fails there. Longhorn documents turning it off
+# when installing through Argo CD.
+preUpgradeChecker:
+  jobEnabled: false

@@ -1,0 +1,33 @@
+# vm-infra's GPU template (packer/ubuntu-gpu.pkr.hcl) already installs the
+# NVIDIA driver and container toolkit; RKE2 detects the toolkit's runtime and
+# registers "nvidia" in its containerd config. The operator must not install
+# its own.
+driver:
+  enabled: false
+
+toolkit:
+  enabled: false
+
+operator:
+  defaultRuntime: containerd
+  # Created by the operator; GPU workloads set
+  # spec.runtimeClassName: nvidia to reach the GPU.
+  runtimeClass: nvidia
+
+# Node Feature Discovery labels GPU nodes with nvidia.com/gpu.present=true,
+# which k8s-apps' Ollama selects on. No manual node labelling needed.
+nfd:
+  enabled: true
+
+devicePlugin:
+  enabled: true
+
+gfd:
+  enabled: true
+
+# GPU metrics for Prometheus. The ServiceMonitor CRD comes from
+# kube-prometheus-stack (a later wave); the operator retries until it exists.
+dcgmExporter:
+  enabled: true
+  serviceMonitor:
+    enabled: true

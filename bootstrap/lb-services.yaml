@@ -1,0 +1,33 @@
+# Wave 0: LoadBalancer Services in front of UIs vm-infra installs as
+# ClusterIP (Hubble UI, Argo CD server), because the address pool above
+# doesn't exist yet when vm-infra runs.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: lb-services
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: k8s-infra
+  source:
+    repoURL: https://github.com/ykantoni/k8s-infra.git
+    targetRevision: main
+    path: charts/lb-services
+    helm:
+      releaseName: lb-services
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m

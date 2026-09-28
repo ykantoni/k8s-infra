@@ -1,0 +1,16 @@
+pool:
+  name: default
+  # Inclusive range of addresses handed to LoadBalancer services. Must be free
+  # on the subnet the nodes sit on, since announcement is ARP based: outside
+  # any DHCP scope, clear of the node addresses (192.168.1.201-206) and of the
+  # control-plane VIP (192.168.1.99).
+  start: "192.168.1.60"
+  stop: "192.168.1.98"
+
+l2Announcements:
+  # Regular expressions matching the node interfaces that answer ARP.
+  interfaces:
+    - ^eth[0-9]+
+  # Off so traffic only lands on nodes that run workloads: a node that claims
+  # an address without hosting a backend still attracts the traffic.
+  announceOnControlPlane: false

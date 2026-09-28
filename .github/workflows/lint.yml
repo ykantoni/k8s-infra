@@ -1,0 +1,53 @@
+name: Lint
+
+# Runs on GitHub-hosted runners only: nothing here touches the cluster.
+# Argo CD pulls from main; this just keeps broken manifests from getting
+# there.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The repository is public: only SealedSecrets may be committed.
+      - name: No plain Secrets
+        run: |
+          if grep -rlE '^kind:[[:space:]]*Secret[[:space:]]*$' --include='*.yaml' --include='*.yml' .; then
+            echo "::error::Plain Secret manifests found (listed above). Seal them with kubeseal; see README.md."
+            exit 1
+          fi
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Install kubeconform
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar xz -C "$RUNNER_TEMP/bin" kubeconform
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Lint local charts
+        run: |
+          for chart in charts/*/; do
+            helm lint "$chart"
+            helm template "$chart" | kubeconform -strict -summary -ignore-missing-schemas
+          done
+
+      - name: Validate Applications and manifests
+        run: |
+          kubeconform -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            bootstrap/ $(find manifests -name '*.yaml' -o -name '*.yml' 2>/dev/null)

@@ -1,0 +1,49 @@
+# Wave 2: NVIDIA GPU operator, replacing the standalone device plugin. The
+# driver and container toolkit are baked into vm-infra's GPU template, so
+# only the Kubernetes-side components run: NFD labelling
+# (nvidia.com/gpu.present), the "nvidia" RuntimeClass, the device plugin,
+# GPU feature discovery, DCGM exporter and the validator.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gpu-operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: k8s-infra
+  sources:
+    - repoURL: https://helm.ngc.nvidia.com/nvidia
+      chart: gpu-operator
+      targetRevision: v25.3.2
+      helm:
+        releaseName: gpu-operator
+        valueFiles:
+          - $values/values/gpu-operator/values.yaml
+    - repoURL: https://github.com/ykantoni/k8s-infra.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gpu-operator
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    # Operand DaemonSets need host access (device nodes, host paths).
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/audit: privileged
+        pod-security.kubernetes.io/warn: privileged

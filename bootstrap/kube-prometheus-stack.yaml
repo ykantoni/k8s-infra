@@ -1,0 +1,52 @@
+# Wave 3, last: needs Longhorn for its PVCs, and nothing waits on it, so a
+# Grafana stuck on a not-yet-sealed admin secret blocks nothing else.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: k8s-infra
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 90.0.0
+      helm:
+        releaseName: kube-prometheus-stack
+        valueFiles:
+          - $values/values/kube-prometheus-stack/values.yaml
+    - repoURL: https://github.com/ykantoni/k8s-infra.git
+      targetRevision: main
+      ref: values
+    # SealedSecrets for this addon (grafana-admin).
+    - repoURL: https://github.com/ykantoni/k8s-infra.git
+      targetRevision: main
+      path: manifests/kube-prometheus-stack
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true
+      # The Prometheus operator CRDs exceed the client-side-apply
+      # annotation size limit.
+      - ServerSideApply=true
+    # node-exporter needs hostNetwork, hostPID and hostPath /proc and /sys.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/audit: privileged
+        pod-security.kubernetes.io/warn: privileged

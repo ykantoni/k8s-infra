@@ -1,0 +1,24 @@
+{{- if .Values.argocdServer.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-server-lb
+  namespace: {{ .Values.argocdServer.namespace }}
+  {{- with .Values.argocdServer.loadBalancerIP }}
+  annotations:
+    io.cilium/lb-ipam-ips: {{ . | quote }}
+  {{- end }}
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: argocd-server
+    app.kubernetes.io/instance: argocd
+  ports:
+    # argocd-server serves both HTTP (redirect) and HTTPS on 8080.
+    - name: http
+      port: 80
+      targetPort: 8080
+    - name: https
+      port: 443
+      targetPort: 8080
+{{- end }}

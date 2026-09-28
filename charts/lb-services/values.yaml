@@ -1,0 +1,14 @@
+# vm-infra installs Hubble UI and Argo CD with ClusterIP Services: the LB-IPAM
+# pool only exists once k8s-infra syncs, and a LoadBalancer Service without an
+# address would hang vm-infra's helm_release waits. These separate Services
+# pick up an address from the pool instead. Set loadBalancerIP to pin one.
+
+hubbleUi:
+  enabled: true
+  namespace: kube-system
+  loadBalancerIP: ""
+
+argocdServer:
+  enabled: true
+  namespace: argocd
+  loadBalancerIP: ""

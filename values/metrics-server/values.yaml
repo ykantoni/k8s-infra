@@ -1,0 +1,9 @@
+args:
+  # Node hostnames aren't DNS-resolvable from inside the cluster, so the
+  # Hostname address type metrics-server prefers by default never connects;
+  # InternalIP is what's actually reachable.
+  - --kubelet-preferred-address-types=InternalIP
+  # The kubelet serving certificate is signed by the cluster's own CA, which
+  # isn't in metrics-server's trust store. Skipping verification is the
+  # standard workaround on self-managed kubelets.
+  - --kubelet-insecure-tls
