@@ -1,0 +1,64 @@
+# Three-node HA Raft, Shamir seal (no seal stanza): unseal keys never live in
+# the cluster once `just bao-keys-backup` has run. The chart's pod and
+# container securityContexts already meet the "restricted" Pod Security
+# level RKE2's CIS profile enforces.
+
+injector:
+  # ExternalSecrets deliver secrets as plain Kubernetes Secrets instead.
+  enabled: false
+
+server:
+  # Ready while sealed or uninitialised (the chart's default exec probe is
+  # not). Otherwise Argo CD never sees the StatefulSet Healthy, and the
+  # PostSync bootstrap Job that initialises and reports on it never runs.
+  # Clients use the openbao-active Service, which only ever selects the
+  # unsealed leader, so a sealed-but-Ready pod gets no traffic.
+  readinessProbe:
+    path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+
+  dataStorage:
+    enabled: true
+    size: 2Gi
+    # Default StorageClass (Longhorn, 3 replicas) on top of Raft's own 3x.
+
+  # Chart default: required anti-affinity on kubernetes.io/hostname, one
+  # Raft node per worker.
+
+  # Lets OpenBao's Kubernetes auth method call TokenReview with its own
+  # ServiceAccount.
+  authDelegator:
+    enabled: true
+
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = true
+
+        listener "tcp" {
+          tls_disable     = 1
+          address         = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+
+        storage "raft" {
+          path = "/openbao/data"
+
+          retry_join {
+            leader_api_addr = "http://openbao-0.openbao-internal:8200"
+          }
+          retry_join {
+            leader_api_addr = "http://openbao-1.openbao-internal:8200"
+          }
+          retry_join {
+            leader_api_addr = "http://openbao-2.openbao-internal:8200"
+          }
+        }
+
+        service_registration "kubernetes" {}
+
+ui:
+  enabled: true

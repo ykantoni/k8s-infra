@@ -20,11 +20,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The repository is public: only SealedSecrets may be committed.
+      # The repository is public: secrets live in OpenBao, and only
+      # ExternalSecrets referencing them may be committed.
       - name: No plain Secrets
         run: |
           if grep -rlE '^kind:[[:space:]]*Secret[[:space:]]*$' --include='*.yaml' --include='*.yml' .; then
-            echo "::error::Plain Secret manifests found (listed above). Seal them with kubeseal; see README.md."
+            echo "::error::Plain Secret manifests found (listed above). Store the values in OpenBao and commit an ExternalSecret instead; see README.md."
             exit 1
           fi
 

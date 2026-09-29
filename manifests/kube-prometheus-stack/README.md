@@ -1,20 +1,19 @@
-# kube-prometheus-stack SealedSecrets
+# kube-prometheus-stack ExternalSecrets
 
 Synced into `monitoring` by the `kube-prometheus-stack` Application
 (third source). Only `*.yaml`/`*.yml`/`*.json` files here are applied.
 
-Expected here: `grafana-admin.sealed.yaml`, the Grafana login referenced by
+`grafana-admin.yaml` is the Grafana login referenced by
 `values/kube-prometheus-stack/values.yaml` (`grafana.admin.existingSecret`).
-Create it with (from the repo root, `pub-cert.pem` present):
+It syncs OpenBao's `secret/monitoring/grafana-admin` into Secret
+`grafana-admin`. Write the value once (see `manifests/openbao/README.md`
+for the token):
 
 ```bash
-kubectl create secret generic grafana-admin -n monitoring \
-  --from-literal=admin-user=admin \
-  --from-literal=admin-password='<choose one>' \
-  --dry-run=client -o yaml \
-| kubeseal --cert pub-cert.pem -o yaml \
-> manifests/kube-prometheus-stack/grafana-admin.sealed.yaml
+kubectl -n openbao exec -it openbao-0 -- sh -c \
+  'BAO_TOKEN=<token> bao kv put secret/monitoring/grafana-admin \
+     admin-user=admin admin-password=<choose one>'
 ```
 
-Until it's committed, Grafana's pod waits on the missing Secret; Prometheus
-and Alertmanager run regardless.
+Until the value exists, Grafana's pod waits on the missing Secret.
+Prometheus and Alertmanager run regardless.

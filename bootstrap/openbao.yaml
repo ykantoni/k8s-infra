@@ -1,0 +1,45 @@
+# Wave 2: needs Longhorn (wave 1) for its Raft PVCs. Three HA Raft nodes,
+# Shamir-sealed: every pod restart leaves that pod sealed until someone runs
+# `just bao-unseal` in vm-infra. The bootstrap Job in manifests/openbao
+# initialises and configures it (PostSync); see manifests/openbao/README.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openbao
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: k8s-infra
+  sources:
+    - repoURL: https://openbao.github.io/openbao-helm
+      chart: openbao
+      targetRevision: 0.30.0
+      helm:
+        releaseName: openbao
+        valueFiles:
+          - $values/values/openbao/values.yaml
+    - repoURL: https://github.com/ykantoni/k8s-infra.git
+      targetRevision: main
+      ref: values
+    # Bootstrap Job and the ClusterSecretStore ExternalSecrets read through.
+    - repoURL: https://github.com/ykantoni/k8s-infra.git
+      targetRevision: main
+      path: manifests/openbao
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openbao
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    syncOptions:
+      - CreateNamespace=true

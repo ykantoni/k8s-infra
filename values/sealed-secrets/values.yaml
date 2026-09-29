@@ -1,3 +1,0 @@
-# kubeseal's defaults (--controller-name sealed-secrets-controller,
-# --controller-namespace kube-system) then work without flags.
-fullnameOverride: sealed-secrets-controller

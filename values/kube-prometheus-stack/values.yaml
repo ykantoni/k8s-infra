@@ -38,9 +38,10 @@ alertmanager:
 grafana:
   enabled: true
 
-  # Login comes from the grafana-admin SealedSecret in
-  # manifests/kube-prometheus-stack/, not a password in this file. Grafana
-  # stays Pending until that secret exists; see README.md "Secrets".
+  # Login comes from the grafana-admin ExternalSecret in
+  # manifests/kube-prometheus-stack/ (OpenBao secret/monitoring/grafana-admin),
+  # not a password in this file. Grafana stays Pending until that secret
+  # exists; see README.md "Secrets".
   admin:
     existingSecret: grafana-admin
     userKey: admin-user

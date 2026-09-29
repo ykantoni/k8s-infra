@@ -1,0 +1,239 @@
+# Initialises and configures OpenBao, as an Argo CD Sync hook in wave 1:
+# after the chart's resources (wave 0) are Healthy, before the
+# ClusterSecretStore (wave 2), which can't turn Ready until this has created
+# its auth role. Idempotent; runs on every sync of the openbao Application.
+#
+#   uninitialised       -> init (5 shares, threshold 3), save the result to
+#                          Secret openbao-init, unseal all three pods,
+#                          configure with the root token
+#   initialised, sealed -> print which pods need `just bao-unseal`; exit 0
+#   initialised, active -> log in with Kubernetes auth (role
+#                          openbao-bootstrap) and re-apply the configuration
+#
+# Configuration: kv-v2 at secret/, Kubernetes auth, policy + role
+# external-secrets (read secret/*, for ESO's ServiceAccount), and policy +
+# role openbao-bootstrap for this Job's own later runs.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-bootstrap
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-bootstrap
+rules:
+  # Only to write the init result once, and read it back if a first run
+  # died between init and configuration.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["openbao-init"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: openbao-bootstrap
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-bootstrap
+data:
+  bootstrap.sh: |
+    #!/bin/sh
+    set -eu
+
+    NS=openbao
+    PODS="0 1 2"
+    SHARES=5
+    THRESHOLD=3
+    ACTIVE=http://openbao-active.$NS.svc:8200
+    SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+
+    pod() { echo "http://openbao-$1.openbao-internal.$NS.svc:8200"; }
+    seal_status() { curl -sf --max-time 5 "$(pod "$1")/v1/sys/seal-status"; }
+
+    wait_for() { # <description> <command...>
+      what=$1; shift
+      i=0
+      until "$@" >/dev/null 2>&1; do
+        i=$((i + 1))
+        [ "$i" -ge 120 ] && { echo "timed out waiting for $what"; exit 1; }
+        sleep 5
+      done
+    }
+
+    unseal() { # <pod index> <init json file>
+      wait_for "openbao-$1" seal_status "$1"
+      i=0
+      while [ "$(seal_status "$1" | jq -r .sealed)" != "false" ]; do
+        i=$((i + 1))
+        [ "$i" -ge 60 ] && { echo "openbao-$1 still sealed"; exit 1; }
+        # A follower only accepts keys once it has reached the leader
+        # through retry_join; until then this errors and we try again.
+        for k in $(jq -r ".keys_base64[0:$THRESHOLD][]" "$2"); do
+          curl -sf -X PUT -d "{\"key\":\"$k\"}" "$(pod "$1")/v1/sys/unseal" >/dev/null || true
+        done
+        sleep 5
+      done
+      echo "openbao-$1 unsealed"
+    }
+
+    api() { # <method> <path> [json body]
+      if [ $# -ge 3 ]; then
+        curl -sf -X "$1" -H "X-Vault-Token: $TOKEN" -d "$3" "$ACTIVE/v1/$2"
+      else
+        curl -sf -X "$1" -H "X-Vault-Token: $TOKEN" "$ACTIVE/v1/$2"
+      fi
+    }
+
+    put_policy() { # <name> <hcl>
+      api PUT "sys/policies/acl/$1" "$(jq -n --arg p "$2" '{policy: $p}')" >/dev/null
+    }
+
+    put_role() { # <name> <sa name> <sa namespace> <policy>
+      api POST "auth/kubernetes/role/$1" "$(jq -n --arg sa "$2" --arg ns "$3" --arg p "$4" \
+        '{bound_service_account_names: [$sa], bound_service_account_namespaces: [$ns],
+          token_policies: [$p], token_ttl: "1h"}')" >/dev/null
+    }
+
+    configure() {
+      wait_for "the active node" curl -sf --max-time 5 "$ACTIVE/v1/sys/leader"
+
+      if ! api GET sys/mounts | jq -e '.data["secret/"]' >/dev/null; then
+        api POST sys/mounts/secret '{"type":"kv","options":{"version":"2"}}' >/dev/null
+        echo "enabled kv-v2 at secret/"
+      fi
+
+      if ! api GET sys/auth | jq -e '.data["kubernetes/"]' >/dev/null; then
+        api POST sys/auth/kubernetes '{"type":"kubernetes"}' >/dev/null
+        echo "enabled kubernetes auth"
+      fi
+      # OpenBao runs in-cluster, so it uses its own ServiceAccount token
+      # and CA for TokenReview (authDelegator in values/openbao).
+      api POST auth/kubernetes/config '{"kubernetes_host":"https://kubernetes.default.svc"}' >/dev/null
+
+      put_policy external-secrets-read '
+    path "secret/data/*"     { capabilities = ["read"] }
+    path "secret/metadata/*" { capabilities = ["read", "list"] }
+    '
+      put_role external-secrets external-secrets external-secrets external-secrets-read
+
+      # Enough to re-apply everything above on later runs without a root
+      # token. Anything holding it can grant itself more, so it's bound to
+      # this Job's ServiceAccount only.
+      put_policy openbao-bootstrap '
+    path "sys/mounts"          { capabilities = ["read"] }
+    path "sys/mounts/*"        { capabilities = ["create", "read", "update"] }
+    path "sys/auth"            { capabilities = ["read"] }
+    path "sys/auth/*"          { capabilities = ["create", "read", "update", "sudo"] }
+    path "auth/kubernetes/*"   { capabilities = ["create", "read", "update"] }
+    path "sys/policies/acl/*"  { capabilities = ["create", "read", "update"] }
+    '
+      put_role openbao-bootstrap openbao-bootstrap "$NS" openbao-bootstrap
+
+      echo "configuration applied"
+    }
+
+    wait_for openbao-0 seal_status 0
+
+    if [ "$(seal_status 0 | jq -r .initialized)" = "false" ]; then
+      echo "initialising OpenBao"
+      curl -sf -X PUT \
+        -d "{\"secret_shares\":$SHARES,\"secret_threshold\":$THRESHOLD}" \
+        "$(pod 0)/v1/sys/init" > /tmp/init.json
+      kubectl -n "$NS" create secret generic openbao-init --from-file=init.json=/tmp/init.json
+      echo "unseal keys and root token saved to Secret openbao-init:" \
+           "run \`just bao-keys-backup\` in vm-infra now"
+
+      for p in $PODS; do unseal "$p" /tmp/init.json; done
+
+      TOKEN=$(jq -r .root_token /tmp/init.json)
+      configure
+      exit 0
+    fi
+
+    sealed=""
+    for p in $PODS; do
+      s=$(seal_status "$p" | jq -r .sealed || echo unknown)
+      [ "$s" = "false" ] || sealed="$sealed openbao-$p"
+    done
+    if [ -n "$sealed" ]; then
+      echo "sealed or unreachable:$sealed -- run \`just bao-unseal\` in vm-infra"
+    fi
+
+    if ! curl -sf --max-time 5 "$ACTIVE/v1/sys/leader" >/dev/null; then
+      echo "no unsealed active node; skipping configuration"
+      exit 0
+    fi
+
+    TOKEN=$(curl -sf -X POST \
+      -d "$(jq -n --arg jwt "$SA_TOKEN" '{role: "openbao-bootstrap", jwt: $jwt}')" \
+      "$ACTIVE/v1/auth/kubernetes/login" | jq -r .auth.client_token) || TOKEN=""
+
+    if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+      # A first run that died after init but before configure(): the
+      # openbao-bootstrap role doesn't exist yet. Fall back to the root
+      # token, if it hasn't been moved off the cluster already.
+      TOKEN=$(kubectl -n "$NS" get secret openbao-init -o jsonpath='{.data.init\.json}' 2>/dev/null \
+        | base64 -d | jq -r .root_token) || TOKEN=""
+      if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+        echo "can't authenticate: Kubernetes auth role openbao-bootstrap is missing"
+        echo "and Secret openbao-init is gone; configure with the root token by hand"
+        exit 1
+      fi
+    fi
+
+    configure
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openbao-bootstrap
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: openbao-bootstrap
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          # kubectl, curl and jq in one image.
+          image: alpine/k8s:1.34.12
+          command: ["/bin/sh", "/scripts/bootstrap.sh"]
+          env:
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: openbao-bootstrap

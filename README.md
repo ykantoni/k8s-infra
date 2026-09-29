@@ -13,13 +13,14 @@ Application in project `k8s-infra` (any namespace, any cluster-scoped kind).
 
 | Wave | Application             | Namespace         | Source                                   |
 | ---- | ----------------------- | ----------------- | ---------------------------------------- |
-| -1   | `sealed-secrets`        | `kube-system`     | bitnami-labs `sealed-secrets` chart      |
+| -1   | `external-secrets`      | `external-secrets` | `external-secrets` chart (operator + CRDs) |
 | 0    | `cilium-lb-ipam`        | `kube-system`     | `charts/cilium-lb-ipam` (pool + L2 policy) |
 | 0    | `lb-services`           | `kube-system`/`argocd` | `charts/lb-services` (LoadBalancers for Hubble UI, Argo CD) |
 | 1    | `longhorn`              | `longhorn-system` | `longhorn` chart; default StorageClass   |
 | 2    | `metrics-server`        | `kube-system`     | `metrics-server` chart                   |
 | 2    | `cnpg-operator`         | `cnpg-system`     | `cloudnative-pg` chart (operator + CRDs) |
 | 2    | `gpu-operator`          | `gpu-operator`    | NVIDIA `gpu-operator` chart              |
+| 2    | `openbao`               | `openbao`         | `openbao` chart (3-node Raft) + `manifests/openbao` |
 | 3    | `kube-prometheus-stack` | `monitoring`      | `kube-prometheus-stack` chart + `manifests/kube-prometheus-stack` |
 
 Waves wait on the previous wave being Healthy: vm-infra's `modules/argocd`
@@ -41,8 +42,7 @@ Not here, on purpose:
 bootstrap/<addon>.yaml         one Argo CD Application per addon
 values/<addon>/values.yaml     Helm values for chart-repo addons ($values ref)
 charts/<chart>/                local charts (their own values.yaml)
-manifests/<addon>/             SealedSecrets and other raw manifests for that addon
-pub-cert.pem                   Sealed Secrets public cert, for offline sealing
+manifests/<addon>/             ExternalSecrets and other raw manifests for that addon
 ```
 
 Chart-repo addons use multi-source Applications: the chart from its Helm
@@ -65,26 +65,40 @@ Upgrading an addon is a `targetRevision` bump in its `bootstrap/` file.
 
 ## Secrets
 
-The repository is public, so secrets are committed only as `SealedSecret`s,
-encrypted to the in-cluster Sealed Secrets controller. `lint.yml` fails on any
+Secret values live in OpenBao (the `openbao` Application: three Raft nodes,
+2Gi Longhorn PVC each, Shamir-sealed). External Secrets Operator syncs them
+into ordinary Kubernetes Secrets, so the repository only holds
+`ExternalSecret` manifests, which carry no values. `lint.yml` fails on any
 plain `kind: Secret`.
 
-```bash
-kubectl create secret generic <name> -n <namespace> \
-  --from-literal=<key>=<value> --dry-run=client -o yaml \
-| kubeseal --cert pub-cert.pem -o yaml > manifests/<addon>/<name>.sealed.yaml
+Store a value under `secret/<namespace>/<name>`, then commit an
+ExternalSecret reading it through `ClusterSecretStore/openbao`:
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: <name>
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: <name>
+  dataFrom:
+    - extract:
+        key: <namespace>/<name>
 ```
 
-`pub-cert.pem` comes from `just seal-cert` in vm-infra once the controller is
-running; commit it here. The controller's private key is restored by
-vm-infra on every rebuild (see vm-infra's `modules/argocd/README.md`), so
-sealed files stay valid across cluster rebuilds.
+Initialisation, unsealing after pod restarts, key backup and writing values
+are covered in `manifests/openbao/README.md`.
 
 Secrets expected today:
 
-| File                                                      | Used by                         |
-| --------------------------------------------------------- | ------------------------------- |
-| `manifests/kube-prometheus-stack/grafana-admin.sealed.yaml` | Grafana login (`admin-user`, `admin-password`) |
+| OpenBao path                          | ExternalSecret                                   | Used by |
+| ------------------------------------- | ------------------------------------------------ | ------- |
+| `secret/monitoring/grafana-admin`     | `manifests/kube-prometheus-stack/grafana-admin.yaml` | Grafana login (`admin-user`, `admin-password`) |
 
 ## Notes per addon
 
@@ -100,3 +114,8 @@ Secrets expected today:
   Prometheus, Grafana are LoadBalancer Services on the LB-IPAM pool.
 - **cnpg-operator** — here rather than in k8s-apps because its CRDs are
   cluster-scoped; k8s-apps only creates `Cluster` objects.
+- **openbao** — readiness probe accepts sealed/uninitialised pods, so Argo CD
+  sees the StatefulSet Healthy and runs the bootstrap Job; clients go through
+  the `openbao-active` Service, which only selects the unsealed leader.
+  `updateStrategyType` is the chart's `OnDelete`: after a chart upgrade,
+  delete the pods one at a time and `just bao-unseal` each.

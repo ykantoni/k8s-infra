@@ -1,5 +1,5 @@
 # Wave 3, last: needs Longhorn for its PVCs, and nothing waits on it, so a
-# Grafana stuck on a not-yet-sealed admin secret blocks nothing else.
+# Grafana stuck on a not-yet-written admin secret blocks nothing else.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -22,7 +22,7 @@ spec:
     - repoURL: https://github.com/ykantoni/k8s-infra.git
       targetRevision: main
       ref: values
-    # SealedSecrets for this addon (grafana-admin).
+    # ExternalSecrets for this addon (grafana-admin).
     - repoURL: https://github.com/ykantoni/k8s-infra.git
       targetRevision: main
       path: manifests/kube-prometheus-stack

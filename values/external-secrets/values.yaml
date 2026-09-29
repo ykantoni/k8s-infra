@@ -1,0 +1,4 @@
+# The controller's ServiceAccount (external-secrets/external-secrets) is what
+# OpenBao's Kubernetes auth role "external-secrets" is bound to; see
+# manifests/openbao/bootstrap-job.yaml. Don't rename the release.
+installCRDs: true
