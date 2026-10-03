@@ -1,3 +1,15 @@
+# The API server's aggregation layer reaches metrics-server via its pod IP
+# directly (not a Service), from the *host* network namespace -- and in this
+# cluster that specific path (host netns -> pod IP on another node) never
+# arrives, even though ordinary pod-to-pod traffic across nodes works fine
+# (confirmed: no packet on the vxlan interface, no Cilium drop event,
+# nothing -- traced into Cilium's host-routing internals without a fix
+# found there). hostNetwork sidesteps the whole class of problem: the pod
+# binds the node's real IP directly, so the aggregation layer's discovery
+# check never needs cross-node pod-network routing at all.
+hostNetwork:
+  enabled: true
+
 args:
   # Node hostnames aren't DNS-resolvable from inside the cluster, so the
   # Hostname address type metrics-server prefers by default never connects;
