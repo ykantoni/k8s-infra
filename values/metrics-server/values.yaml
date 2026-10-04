@@ -10,6 +10,13 @@
 hostNetwork:
   enabled: true
 
+# hostNetwork means this pod binds the port directly on the node, not just
+# inside its own network namespace -- the chart's default containerPort
+# (10250) collides with the kubelet's own API, which is already listening
+# there on every node. Without this, metrics-server panics on startup:
+# "bind: address already in use" (CrashLoopBackOff).
+containerPort: 4443
+
 args:
   # Node hostnames aren't DNS-resolvable from inside the cluster, so the
   # Hostname address type metrics-server prefers by default never connects;
