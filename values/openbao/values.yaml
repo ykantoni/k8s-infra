@@ -1,13 +1,28 @@
 # Three-node HA Raft, Shamir seal (no seal stanza): unseal keys never live in
-# the cluster once `just bao-keys-backup` has run. The chart's pod and
-# container securityContexts already meet the "restricted" Pod Security
-# level RKE2's CIS profile enforces.
+# the cluster once `just bao-keys-backup` has run. The chart's pod
+# securityContext meets the "restricted" Pod Security level RKE2's CIS
+# profile enforces, but its container default (allowPrivilegeEscalation:
+# false only, from the chart's server.statefulSet.securityContext.container
+# helper) doesn't -- restricted also requires capabilities.drop: [ALL]. Pod
+# creation was rejected outright: "must set
+# securityContext.capabilities.drop=[\"ALL\"]" (StatefulSet stuck at 0/3, no
+# pods at all). The helper replaces its whole default wholesale once this
+# key is set at all (not a merge), so allowPrivilegeEscalation has to be
+# repeated here too or it'd be lost.
 
 injector:
   # ExternalSecrets deliver secrets as plain Kubernetes Secrets instead.
   enabled: false
 
 server:
+  statefulSet:
+    securityContext:
+      container:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+
   # Ready while sealed or uninitialised (the chart's default exec probe is
   # not). Otherwise Argo CD never sees the StatefulSet Healthy, and the
   # PostSync bootstrap Job that initialises and reports on it never runs.

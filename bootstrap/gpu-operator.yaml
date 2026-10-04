@@ -47,3 +47,14 @@ spec:
         pod-security.kubernetes.io/enforce: privileged
         pod-security.kubernetes.io/audit: privileged
         pod-security.kubernetes.io/warn: privileged
+  # The operator's own controller continuously writes defaulted values
+  # (driver/toolkit versions, resource settings, feature flags, etc.) back
+  # into ClusterPolicy's spec that don't exist in the raw Helm-templated
+  # manifest -- permanent OutOfSync otherwise, with selfHeal fighting the
+  # operator's own reconciliation. Standard, NVIDIA-documented workaround
+  # for running this chart under Argo CD.
+  ignoreDifferences:
+    - group: nvidia.com
+      kind: ClusterPolicy
+      jsonPointers:
+        - /spec
